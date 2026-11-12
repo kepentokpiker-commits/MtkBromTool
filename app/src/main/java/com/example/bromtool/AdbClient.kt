@@ -188,4 +188,68 @@ object AdbClient {
             conn.close()
         }
     }
+
+    /** Autentikasi lalu jalankan satu perintah shell (mis. "reboot -p", "svc power shutdown"). */
+    fun shell(usb: UsbManager, dev: UsbDevice, ctx: Context, command: String, log: (String) -> Unit): Boolean {
+        val itf = (0 until dev.interfaceCount).map { dev.getInterface(it) }.firstOrNull { isAdbInterface(it) }
+            ?: run { log("Interface ADB tidak ditemukan"); return false }
+        var epI: UsbEndpoint? = null
+        var epO: UsbEndpoint? = null
+        for (e in 0 until itf.endpointCount) {
+            val ep = itf.getEndpoint(e)
+            if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                if (ep.direction == UsbConstants.USB_DIR_IN) epI = ep else epO = ep
+            }
+        }
+        if (epI == null || epO == null) { log("Endpoint ADB tidak ketemu"); return false }
+        val conn = usb.openDevice(dev) ?: run { log("Gagal open device ADB"); return false }
+        if (!conn.claimInterface(itf, true)) { conn.close(); log("Gagal claim interface ADB"); return false }
+        val pipe = Pipe(conn, epI, epO)
+
+        try {
+            val (priv, pub) = getOrCreateKeyPair(ctx)
+            pipe.send(packMsg(A_CNXN, A_VERSION, MAX_PAYLOAD, "host::\u0000".toByteArray()))
+            var msg = pipe.recvMsg(5000) ?: run { log("Tidak ada balasan CNXN"); return false }
+            var (cmd, arg0, data) = msg
+
+            if (cmd == A_AUTH && arg0 == AUTH_TOKEN) {
+                log("AUTH diminta, menandatangani token...")
+                val sig = signToken(priv, data)
+                pipe.send(packMsg(A_AUTH, AUTH_SIGNATURE, 0, sig))
+                msg = pipe.recvMsg(5000) ?: run { log("Tidak ada balasan setelah signature"); return false }
+                cmd = msg.first
+
+                if (cmd == A_AUTH) {
+                    log("Key belum dikenal. CEK LAYAR TARGET, izinkan USB debugging!")
+                    val blob = encodePublicKey(pub as RSAPublicKey)
+                    val b64 = android.util.Base64.encodeToString(blob, android.util.Base64.NO_WRAP)
+                    val keyStr = (b64 + " bromtool@android\u0000").toByteArray()
+                    pipe.send(packMsg(A_AUTH, AUTH_RSAPUBLICKEY, 0, keyStr))
+                    msg = pipe.recvMsg(30000) ?: run { log("Timeout menunggu izin di layar target"); return false }
+                    cmd = msg.first
+                }
+            }
+            if (cmd != A_CNXN) { log("Autentikasi ADB gagal (cmd=0x%08X)".format(cmd)); return false }
+            log("ADB terautentikasi")
+
+            pipe.send(packMsg(A_OPEN, 1, 0, "shell:$command\u0000".toByteArray()))
+            val resp = pipe.recvMsg(5000) ?: run { log("Tidak ada balasan OPEN shell"); return false }
+            if (resp.first != A_OKAY) { log("OPEN shell ditolak (cmd=0x%08X)".format(resp.first)); return false }
+            log("Perintah shell \"$command\" terkirim")
+
+            // Baca output beberapa saat (opsional, untuk log)
+            val end = System.currentTimeMillis() + 2000
+            while (System.currentTimeMillis() < end) {
+                val m = pipe.recvMsg(500) ?: break
+                if (m.third.isNotEmpty()) log("OUT: " + String(m.third).trim())
+            }
+            return true
+        } catch (e: Exception) {
+            log("Exception ADB shell: ${e.message}")
+            return false
+        } finally {
+            try { conn.releaseInterface(itf) } catch (_: Exception) {}
+            conn.close()
+        }
+    }
 }

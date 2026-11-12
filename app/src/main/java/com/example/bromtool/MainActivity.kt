@@ -257,6 +257,7 @@ class MainActivity : AppCompatActivity() {
             val p = S.pending
             val pa = S.pendingAdbMode
             if (d != null && granted && p != null && !isTarget(d)) { S.pending = null; fastbootCmd(d, p) }
+            else if (d != null && granted && pa == "__SHELL__") { S.pendingAdbMode = null; val c = pendingShellCmd; pendingShellCmd = null; if (c != null) doAdbShell(d, c) }
             else if (d != null && granted && pa != null) { S.pendingAdbMode = null; doAdbReboot(d, pa) }
             else if (d != null && granted) handshakeAuto(d)
             else print("Izin USB ditolak")
@@ -417,6 +418,8 @@ class MainActivity : AppCompatActivity() {
         menu.add(0, 5, 4, "Scan ulang semua device")
         menu.add(0, 6, 5, "Reboot target (ADB) ke bootloader")
         menu.add(0, 7, 6, "Reboot target (ADB) ke recovery")
+        menu.add(0, 8, 7, "Matikan target (ADB shell reboot -p)")
+        menu.add(0, 9, 8, "Matikan target (ADB shell svc power shutdown)")
         return true
     }
 
@@ -433,6 +436,8 @@ class MainActivity : AppCompatActivity() {
             5 -> { S.failedName = ""; S.asked = ""; scanAndTry() }
             6 -> adbRebootAction("bootloader")
             7 -> adbRebootAction("recovery")
+            8 -> adbShellAction("reboot -p")
+            9 -> adbShellAction("svc power shutdown")
             else -> return super.onOptionsItemSelected(item)
         }
         return true
@@ -458,6 +463,27 @@ class MainActivity : AppCompatActivity() {
     private fun doAdbReboot(dev: UsbDevice, mode: String) {
         print("Memulai reboot ADB ke $mode ...")
         thread { AdbClient.reboot(usb, dev, this, mode) { m -> print(m) } }
+    }
+
+    @Volatile private var pendingShellCmd: String? = null
+
+    private fun adbShellAction(cmd: String) {
+        val dev = findAdbDevice()
+        if (dev == null) { print("Tidak ada device ADB terhubung"); return }
+        if (usb.hasPermission(dev)) doAdbShell(dev, cmd)
+        else {
+            pendingShellCmd = cmd
+            S.pendingAdbMode = "__SHELL__"
+            print("Minta izin USB untuk ADB shell...")
+            usb.requestPermission(dev,
+                PendingIntent.getBroadcast(this, 3, Intent(ACTION_PERM).setPackage(packageName),
+                    PendingIntent.FLAG_MUTABLE))
+        }
+    }
+
+    private fun doAdbShell(dev: UsbDevice, cmd: String) {
+        print("Mengirim shell: $cmd ...")
+        thread { AdbClient.shell(usb, dev, this, cmd) { m -> print(m) } }
     }
 
     private fun fastbootAction(cmd: String) {
