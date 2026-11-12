@@ -88,11 +88,18 @@ class MainActivity : AppCompatActivity() {
         thread {
             while (alive) {
                 try {
+                    val present = usb.deviceList.values.map { it.deviceName }.toSet()
+                    if (S.asked.isNotEmpty() && S.asked !in present) S.asked = ""
+                    if (S.failedName.isNotEmpty() && S.failedName !in present) S.failedName = ""
+
                     if (S.conn == null && !S.attempting) {
                         val d = usb.deviceList.values.firstOrNull { isTarget(it) && it.deviceName != S.failedName }
-                        if (d != null && usb.hasPermission(d)) handshakeAuto(d)
+                        if (d != null) {
+                            if (usb.hasPermission(d)) handshakeAuto(d)
+                            else tryDevice(d) // minta izin sendiri, jangan tunggu broadcast attach
+                        }
                     }
-                    Thread.sleep(300)
+                    Thread.sleep(150)
                 } catch (_: Exception) {}
             }
         }
