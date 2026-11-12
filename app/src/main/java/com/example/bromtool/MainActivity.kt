@@ -36,6 +36,7 @@ private object S {
     @Volatile var statusText = "Menunggu device..."
     @Volatile var hw = ""
     @Volatile var pending: String? = null
+    @Volatile var pendingAdbMode: String? = null
     @Volatile var asked = ""
     @Volatile var failedName = ""
 }
@@ -247,7 +248,9 @@ class MainActivity : AppCompatActivity() {
             val d: UsbDevice? = i.getParcelableExtra(UsbManager.EXTRA_DEVICE)
             val granted = i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
             val p = S.pending
+            val pa = S.pendingAdbMode
             if (d != null && granted && p != null && !isTarget(d)) { S.pending = null; fastbootCmd(d, p) }
+            else if (d != null && granted && pa != null) { S.pendingAdbMode = null; doAdbReboot(d, pa) }
             else if (d != null && granted) handshakeAuto(d)
             else print("Izin USB ditolak")
         }
@@ -405,6 +408,8 @@ class MainActivity : AppCompatActivity() {
         menu.add(0, 3, 2, "Target ke recovery")
         menu.add(0, 4, 3, "Reboot HP ini (root)")
         menu.add(0, 5, 4, "Scan ulang semua device")
+        menu.add(0, 6, 5, "Reboot target (ADB) ke bootloader")
+        menu.add(0, 7, 6, "Reboot target (ADB) ke recovery")
         return true
     }
 
@@ -419,9 +424,33 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("Reboot") { _, _ -> rebootHost() }
                 .setNegativeButton("Batal", null).show()
             5 -> { S.failedName = ""; S.asked = ""; scanAndTry() }
+            6 -> adbRebootAction("bootloader")
+            7 -> adbRebootAction("recovery")
             else -> return super.onOptionsItemSelected(item)
         }
         return true
+    }
+
+    private fun findAdbDevice(): UsbDevice? = usb.deviceList.values.firstOrNull { d ->
+        (0 until d.interfaceCount).any { AdbClient.isAdbInterface(d.getInterface(it)) }
+    }
+
+    private fun adbRebootAction(mode: String) {
+        val dev = findAdbDevice()
+        if (dev == null) { print("Tidak ada device ADB terhubung"); return }
+        if (usb.hasPermission(dev)) doAdbReboot(dev, mode)
+        else {
+            S.pendingAdbMode = mode
+            print("Minta izin USB untuk ADB...")
+            usb.requestPermission(dev,
+                PendingIntent.getBroadcast(this, 2, Intent(ACTION_PERM).setPackage(packageName),
+                    PendingIntent.FLAG_MUTABLE))
+        }
+    }
+
+    private fun doAdbReboot(dev: UsbDevice, mode: String) {
+        print("Memulai reboot ADB ke $mode ...")
+        thread { AdbClient.reboot(usb, dev, this, mode) { m -> print(m) } }
     }
 
     private fun fastbootAction(cmd: String) {
