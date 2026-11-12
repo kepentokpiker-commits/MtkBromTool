@@ -171,13 +171,14 @@ object AdbClient {
                     val keyStr = (b64 + " bromtool@android\u0000").toByteArray()
                     pipe.send(packMsg(A_AUTH, AUTH_RSAPUBLICKEY, 0, keyStr))
                     log("Key terkirim, menunggu balasan (10 detik)...")
-                    msg = pipe.recvMsg(10000)
-                    if (msg == null) {
+                    val m2 = pipe.recvMsg(10000)
+                    if (m2 == null) {
                         log("TIDAK ADA BALASAN SAMA SEKALI setelah key dikirim (device diam)")
                         return false
                     }
-                    cmd = msg.first
-                    log("Balasan setelah kirim key: cmd=0x%08X arg0=0x%08X dataLen=%d".format(msg.first, msg.second, msg.third.size))
+                    msg = m2
+                    cmd = m2.first
+                    log("Balasan setelah kirim key: cmd=0x%08X arg0=0x%08X dataLen=%d".format(m2.first, m2.second, m2.third.size))
                 }
             }
 
