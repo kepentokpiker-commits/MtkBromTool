@@ -163,18 +163,26 @@ object AdbClient {
                 cmd = msg.first
 
                 if (cmd == A_AUTH) {
-                    log("Key belum dikenal. CEK LAYAR TARGET, izinkan USB debugging!")
+                    log("Key belum dikenal, mengirim public key...")
                     val blob = encodePublicKey(pub as RSAPublicKey)
+                    log("Panjang blob key: ${blob.size} byte (harus 532)")
                     val b64 = android.util.Base64.encodeToString(blob, android.util.Base64.NO_WRAP)
+                    log("Panjang base64: ${b64.length} karakter")
                     val keyStr = (b64 + " bromtool@android\u0000").toByteArray()
                     pipe.send(packMsg(A_AUTH, AUTH_RSAPUBLICKEY, 0, keyStr))
-                    msg = pipe.recvMsg(30000) ?: run { log("Timeout menunggu izin di layar target"); return false }
+                    log("Key terkirim, menunggu balasan (10 detik)...")
+                    msg = pipe.recvMsg(10000)
+                    if (msg == null) {
+                        log("TIDAK ADA BALASAN SAMA SEKALI setelah key dikirim (device diam)")
+                        return false
+                    }
                     cmd = msg.first
+                    log("Balasan setelah kirim key: cmd=0x%08X arg0=0x%08X dataLen=%d".format(msg.first, msg.second, msg.third.size))
                 }
             }
 
-            if (cmd != A_CNXN) { log("Autentikasi ADB gagal (cmd=0x%08X)".format(cmd)); return false }
-            log("ADB terautentikasi")
+            if (cmd != A_CNXN) { log("Autentikasi ADB gagal, cmd akhir=0x%08X (bukan CNXN)".format(cmd)); return false }
+            log("ADB terautentikasi, CNXN diterima")
 
             pipe.send(packMsg(A_OPEN, 1, 0, "reboot:$mode\u0000".toByteArray()))
             val resp = pipe.recvMsg(5000) ?: run { log("Tidak ada balasan OPEN"); return false }
